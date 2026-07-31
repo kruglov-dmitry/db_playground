@@ -1,0 +1,41 @@
+services:
+  postgres17:
+    image: postgres:17
+    container_name: uuid-bench-pg17
+    environment:
+      POSTGRES_DB: benchmark
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "${PG17_PORT:-54317}:5432"
+    volumes:
+      - pg17-data:/var/lib/postgresql/data
+      - ./sql/pg17-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U benchmark -d benchmark"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres18:
+    image: postgres:18
+    container_name: uuid-bench-pg18
+    environment:
+      POSTGRES_DB: benchmark
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "${PG18_PORT:-54318}:5432"
+    volumes:
+      # PostgreSQL 18 images use versioned data subdirectories under this path.
+      - pg18-data:/var/lib/postgresql
+      - ./sql/pg18-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U benchmark -d benchmark"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pg17-data:
+  pg18-data:

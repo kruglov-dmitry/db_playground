@@ -1,0 +1,10 @@
+[package]
+name = "pg-uuid-loader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+postgres = "0.19"
+rand = "0.9"
