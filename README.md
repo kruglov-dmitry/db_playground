@@ -37,16 +37,6 @@ scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchm
 
 Every run creates two files under `results/`: a `*.plan.json` execution plan and a `*.meta.json` snapshot containing database/index sizes, server version, lookup count, and timestamp. These are the inputs for the comparison visualizer; they are intentionally excluded from Git. Optionally add a fourth argument to use a custom label.
 
-## Visualize the comparison
-
-After all four lookup runs are complete, generate a self-contained report:
-
-```bash
-python3 scripts/visualize-results.py
-```
-
-Open `results/comparison.html`. It charts execution time and buffer reads for 100 and 1,000 lookups, and includes the full plan and storage comparison tables. Use `--input` and `--output` to customize file locations.
-
 To compare on-disk footprint after a load:
 
 ```bash
@@ -55,16 +45,3 @@ psql postgres://benchmark:benchmark@localhost:54318/benchmark -c "SELECT pg_size
 ```
 
 For a smoke test, use `--rows 1000000` first. The loader prints throughput every five seconds and exits only after PostgreSQL has accepted the COPY stream.
-
-17:
-kruglovdmitry@MacBookPro pg_uuid_test % psql postgres://benchmark:benchmark@localhost:54317/benchmark -c "SELECT pg_size_pretty(pg_relation_size('benchmark_items')), pg_size_pretty(pg_indexes_size('benchmark_items'));"
- pg_size_pretty | pg_size_pretty 
-----------------+----------------
- 9953 MB        | 7920 MB
-(1 row)
-
-kruglovdmitry@MacBookPro pg_uuid_test % psql postgres://benchmark:benchmark@localhost:54318/benchmark -c "SELECT pg_size_pretty(pg_relation_size('benchmark_items')), pg_size_pretty(pg_indexes_size('benchmark_items'));"
- pg_size_pretty | pg_size_pretty 
-----------------+----------------
- 0 bytes        | 8192 bytes
-(1 row)
