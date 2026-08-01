@@ -11,6 +11,7 @@ services:
     volumes:
       - pg17-data:/var/lib/postgresql/data
       - ./sql/pg17-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./sql/variant-tables.sql:/docker-entrypoint-initdb.d/02-variant-tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U benchmark -d benchmark"]
       interval: 2s
@@ -30,6 +31,7 @@ services:
       # PostgreSQL 18 images use versioned data subdirectories under this path.
       - pg18-data:/var/lib/postgresql
       - ./sql/pg18-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./sql/variant-tables.sql:/docker-entrypoint-initdb.d/02-variant-tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U benchmark -d benchmark"]
       interval: 2s

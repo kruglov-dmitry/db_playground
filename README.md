@@ -24,6 +24,22 @@ target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:543
 
 The PG18 table has a check constraint that rejects non-v7 UUIDs. UUIDv7 values are generated according to RFC 9562 in the loader, so the benchmark does not depend on a particular server-side UUID extension.
 
+## Test both UUID types on both PostgreSQL versions
+
+Fresh containers create `benchmark_items_v4` and `benchmark_items_v7` automatically. For databases that already exist, add the variant tables once:
+
+```bash
+psql postgres://benchmark:benchmark@localhost:54317/benchmark -f sql/variant-tables.sql
+psql postgres://benchmark:benchmark@localhost:54318/benchmark -f sql/variant-tables.sql
+```
+
+Then load the two additional combinations. These use separate tables, so the existing runs stay intact:
+
+```bash
+target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:54318/benchmark --uuid v4 --table benchmark_items_v4 --rows 200000000 --truncate --sample-output samples/pg18-v4.csv
+target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:54317/benchmark --uuid v7 --table benchmark_items_v7 --rows 200000000 --truncate --sample-output samples/pg17-v7.csv
+```
+
 ## Compare lookup plans
 
 The loader saves real inserted IDs, avoiding the misleading “all misses” plan that random lookup values would produce.
@@ -35,7 +51,26 @@ scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchm
 scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchmark samples/pg18-v7.csv 1000
 ```
 
+For a variant table, pass the optional label and table name:
+
+```bash
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchmark samples/pg18-v4.csv 100 pg18-v4 benchmark_items_v4
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchmark samples/pg18-v4.csv 1000 pg18-v4 benchmark_items_v4
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54317/benchmark samples/pg17-v7.csv 100 pg17-v7 benchmark_items_v7
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54317/benchmark samples/pg17-v7.csv 1000 pg17-v7 benchmark_items_v7
+```
+
 Every run creates two files under `results/`: a `*.plan.json` execution plan and a `*.meta.json` snapshot containing database/index sizes, server version, lookup count, and timestamp. These are the inputs for the comparison visualizer; they are intentionally excluded from Git. Optionally add a fourth argument to use a custom label.
+
+## Visualize the comparison
+
+After the eight lookup runs are complete, generate the report:
+
+```bash
+python3 scripts/visualize-results.py
+```
+
+Open `results/comparison.html`. It automatically includes every complete plan/metadata pair in `results/`, including all four PostgreSQL/UUID combinations. After each successful load, the loader saves its duration and throughput as `results/<label>.load.json`; the report reads those files automatically. The label defaults to the sample filename (for example, `samples/pg18-v4.csv` becomes `pg18-v4`).
 
 To compare on-disk footprint after a load:
 

@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, create_dir_all},
+    fs::{File, create_dir_all, rename},
     io::{BufWriter, Write},
     path::Path,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -19,6 +19,15 @@ enum UuidKind {
     V7,
 }
 
+impl UuidKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::V4 => "v4",
+            Self::V7 => "v7",
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(about = "Stream random UUIDs to PostgreSQL through binary COPY")]
 struct Args {
@@ -27,6 +36,9 @@ struct Args {
     dsn: String,
     #[arg(long, value_enum)]
     uuid: UuidKind,
+    /// Destination table (must be a simple lowercase SQL identifier)
+    #[arg(long, default_value = "benchmark_items")]
+    table: String,
     /// Number of rows to insert (use 200000000 for the full benchmark)
     #[arg(long, default_value_t = 200_000_000)]
     rows: u64,
@@ -35,6 +47,12 @@ struct Args {
     sample_size: usize,
     #[arg(long, default_value = "samples/ids.csv")]
     sample_output: String,
+    /// Label used for the saved load-time result (defaults to the sample file name)
+    #[arg(long)]
+    label: Option<String>,
+    /// Directory where the completed load result is written as <label>.load.json
+    #[arg(long, default_value = "results")]
+    load_results_dir: String,
     /// Delete existing rows before loading
     #[arg(long)]
     truncate: bool,
@@ -87,16 +105,78 @@ fn uuid_text(id: &[u8; 16]) -> String {
     )
 }
 
+fn is_simple_identifier(name: &str) -> bool {
+    let mut chars = name.bytes();
+    matches!(chars.next(), Some(b'a'..=b'z' | b'_'))
+        && chars.all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+}
+
+fn is_safe_label(label: &str) -> bool {
+    !label.is_empty()
+        && label
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
+}
+
+fn label_from_sample(sample_output: &str) -> Result<String> {
+    Path::new(sample_output)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .context("deriving a label from --sample-output; pass --label explicitly")
+}
+
+fn write_load_result(args: &Args, label: &str, seconds: f64) -> Result<()> {
+    let output_dir = Path::new(&args.load_results_dir);
+    create_dir_all(output_dir).context("creating load results directory")?;
+    let output = output_dir.join(format!("{label}.load.json"));
+    let temporary = output_dir.join(format!(".{label}.load.json.tmp"));
+    let rows_per_second = args.rows as f64 / seconds;
+    let json = format!(
+        concat!(
+            "{{\n",
+            "  \"label\": \"{label}\",\n",
+            "  \"table\": \"{table}\",\n",
+            "  \"uuid\": \"{uuid}\",\n",
+            "  \"rows\": {rows},\n",
+            "  \"duration_seconds\": {seconds:.3},\n",
+            "  \"rows_per_second\": {rows_per_second:.0}\n",
+            "}}\n"
+        ),
+        label = label,
+        table = args.table,
+        uuid = args.uuid.as_str(),
+        rows = args.rows,
+        seconds = seconds,
+        rows_per_second = rows_per_second,
+    );
+    std::fs::write(&temporary, json).context("writing temporary load result")?;
+    rename(&temporary, &output).context("saving load result")?;
+    eprintln!("saved load result: {}", output.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     if args.rows == 0 || args.batch_rows == 0 {
         bail!("--rows and --batch-rows must be positive");
     }
+    if !is_simple_identifier(&args.table) {
+        bail!("--table must be a simple lowercase SQL identifier");
+    }
+    let label = args
+        .label
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| label_from_sample(&args.sample_output))?;
+    if !is_safe_label(&label) {
+        bail!("--label must contain only lowercase letters, digits, hyphens, or underscores");
+    }
     let mut client = Client::connect(&args.dsn, NoTls).context("connecting to PostgreSQL")?;
     if args.truncate {
-        client.batch_execute("TRUNCATE benchmark_items")?;
+        client.batch_execute(&format!("TRUNCATE {}", args.table))?;
     }
-    let mut copy = client.copy_in("COPY benchmark_items (id) FROM STDIN BINARY")?;
+    let mut copy = client.copy_in(&format!("COPY {} (id) FROM STDIN BINARY", args.table))?;
     copy.write_all(COPY_HEADER)?;
     if let Some(parent) = Path::new(&args.sample_output)
         .parent()
@@ -145,5 +225,6 @@ fn main() -> Result<()> {
         seconds,
         args.rows as f64 / seconds
     );
+    write_load_result(&args, &label, seconds)?;
     Ok(())
 }
