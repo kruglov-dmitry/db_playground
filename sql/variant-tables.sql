@@ -9,3 +9,9 @@ CREATE TABLE IF NOT EXISTS benchmark_items_v7 (
     id uuid PRIMARY KEY,
     inserted_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+
+-- Sequential BIGINT is the append-only primary-key baseline for both versions.
+CREATE TABLE IF NOT EXISTS benchmark_items_bigint (
+    id bigint PRIMARY KEY,
+    inserted_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);

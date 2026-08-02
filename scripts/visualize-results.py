@@ -10,20 +10,22 @@ from collections import defaultdict
 from pathlib import Path
 
 
-COLORS = ("#4f46e5", "#f97316", "#059669", "#dc2626")
+COLORS = ("#4f46e5", "#2563eb", "#f97316", "#dc2626", "#7c3aed", "#a16207")
 SERIES_COLORS = {
     "pg17-v4": "#4f46e5",
     "pg18-v4": "#2563eb",
     "pg17-v7": "#f97316",
     "pg18-v7": "#dc2626",
+    "pg17-bigint": "#7c3aed",
+    "pg18-bigint": "#a16207",
 }
 
 
 def label_sort_key(label: str) -> tuple[int, int, str]:
-    """Group UUIDv4 first, then UUIDv7; pair PG17 and PG18 within each."""
-    uuid_order = 0 if label.endswith("-v4") else 1
+    """Group UUIDv4, UUIDv7, then BIGINT; pair PG17 and PG18 within each."""
+    key_order = {"v4": 0, "v7": 1, "bigint": 2}.get(label.rsplit("-", maxsplit=1)[-1], 3)
     postgres_order = 0 if label.startswith("pg17-") else 1
-    return uuid_order, postgres_order, label
+    return key_order, postgres_order, label
 
 
 def series_color(label: str) -> str:
@@ -31,8 +33,9 @@ def series_color(label: str) -> str:
 
 
 def display_label(label: str) -> str:
-    postgres, uuid_version = label.split("-", maxsplit=1)
-    return f"{postgres.upper().replace('PG', 'PG ')} · UUID{uuid_version[1:]}"
+    postgres, key_type = label.split("-", maxsplit=1)
+    key_label = f"UUID{key_type[1:]}" if key_type.startswith("v") else key_type.upper()
+    return f"{postgres.upper().replace('PG', 'PG ')} · {key_label}"
 
 
 def number(value: int | float) -> str:

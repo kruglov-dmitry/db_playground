@@ -11,7 +11,23 @@ use postgres::{Client, NoTls};
 use rand::{RngCore, rngs::ThreadRng};
 
 const COPY_HEADER: &[u8] = b"PGCOPY\n\xff\r\n\0\0\0\0\0\0\0\0\0";
-const ROW_BYTES: usize = 22; // int16 field count + int32 length + 16 UUID bytes
+const UUID_ROW_BYTES: usize = 22; // int16 field count + int32 length + 16 UUID bytes
+const BIGINT_ROW_BYTES: usize = 14; // int16 field count + int32 length + int64 bytes
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum KeyType {
+    Uuid,
+    Bigint,
+}
+
+impl KeyType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Uuid => "uuid",
+            Self::Bigint => "bigint",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum UuidKind {
@@ -29,13 +45,17 @@ impl UuidKind {
 }
 
 #[derive(Parser, Debug)]
-#[command(about = "Stream random UUIDs to PostgreSQL through binary COPY")]
+#[command(about = "Stream UUID or BIGINT primary keys to PostgreSQL through binary COPY")]
 struct Args {
     /// PostgreSQL connection string, e.g. postgres://benchmark:benchmark@localhost:54317/benchmark
     #[arg(long)]
     dsn: String,
+    /// Key representation to load
+    #[arg(long, value_enum, default_value_t = KeyType::Uuid)]
+    key_type: KeyType,
+    /// UUID version; required when --key-type uuid
     #[arg(long, value_enum)]
-    uuid: UuidKind,
+    uuid: Option<UuidKind>,
     /// Destination table (must be a simple lowercase SQL identifier)
     #[arg(long, default_value = "benchmark_items")]
     table: String,
@@ -126,7 +146,7 @@ fn label_from_sample(sample_output: &str) -> Result<String> {
         .context("deriving a label from --sample-output; pass --label explicitly")
 }
 
-fn write_load_result(args: &Args, label: &str, seconds: f64) -> Result<()> {
+fn write_load_result(args: &Args, label: &str, seconds: f64, uuid: Option<UuidKind>) -> Result<()> {
     let output_dir = Path::new(&args.load_results_dir);
     create_dir_all(output_dir).context("creating load results directory")?;
     let output = output_dir.join(format!("{label}.load.json"));
@@ -137,7 +157,8 @@ fn write_load_result(args: &Args, label: &str, seconds: f64) -> Result<()> {
             "{{\n",
             "  \"label\": \"{label}\",\n",
             "  \"table\": \"{table}\",\n",
-            "  \"uuid\": \"{uuid}\",\n",
+            "  \"key_type\": \"{key_type}\",\n",
+            "  \"uuid_version\": {uuid_version},\n",
             "  \"rows\": {rows},\n",
             "  \"duration_seconds\": {seconds:.3},\n",
             "  \"rows_per_second\": {rows_per_second:.0}\n",
@@ -145,7 +166,10 @@ fn write_load_result(args: &Args, label: &str, seconds: f64) -> Result<()> {
         ),
         label = label,
         table = args.table,
-        uuid = args.uuid.as_str(),
+        key_type = args.key_type.as_str(),
+        uuid_version = uuid
+            .map(|kind| format!("\"{}\"", kind.as_str()))
+            .unwrap_or_else(|| "null".to_owned()),
         rows = args.rows,
         seconds = seconds,
         rows_per_second = rows_per_second,
@@ -164,6 +188,18 @@ fn main() -> Result<()> {
     if !is_simple_identifier(&args.table) {
         bail!("--table must be a simple lowercase SQL identifier");
     }
+    let uuid = match args.key_type {
+        KeyType::Uuid => Some(
+            args.uuid
+                .context("--uuid is required when --key-type uuid")?,
+        ),
+        KeyType::Bigint => {
+            if args.uuid.is_some() {
+                bail!("--uuid cannot be used when --key-type bigint");
+            }
+            None
+        }
+    };
     let label = args
         .label
         .clone()
@@ -187,22 +223,38 @@ fn main() -> Result<()> {
     let mut sample =
         BufWriter::new(File::create(&args.sample_output).context("creating sample output")?);
     let mut rng = rand::rng();
-    let mut batch = Vec::with_capacity(args.batch_rows * ROW_BYTES);
+    let row_bytes = match args.key_type {
+        KeyType::Uuid => UUID_ROW_BYTES,
+        KeyType::Bigint => BIGINT_ROW_BYTES,
+    };
+    let mut batch = Vec::with_capacity(args.batch_rows * row_bytes);
     let started = Instant::now();
     let mut next_report = Instant::now() + Duration::from_secs(5);
 
     for n in 0..args.rows {
-        let id = match args.uuid {
-            UuidKind::V4 => uuid_v4(&mut rng),
-            UuidKind::V7 => uuid_v7(&mut rng),
-        };
-        if (n as usize) < args.sample_size {
-            writeln!(sample, "{}", uuid_text(&id))?;
-        }
         batch.extend_from_slice(&1_i16.to_be_bytes());
-        batch.extend_from_slice(&16_i32.to_be_bytes());
-        batch.extend_from_slice(&id);
-        if batch.len() >= args.batch_rows * ROW_BYTES {
+        match args.key_type {
+            KeyType::Uuid => {
+                let id = match uuid.expect("UUID type requires a UUID version") {
+                    UuidKind::V4 => uuid_v4(&mut rng),
+                    UuidKind::V7 => uuid_v7(&mut rng),
+                };
+                if (n as usize) < args.sample_size {
+                    writeln!(sample, "{}", uuid_text(&id))?;
+                }
+                batch.extend_from_slice(&16_i32.to_be_bytes());
+                batch.extend_from_slice(&id);
+            }
+            KeyType::Bigint => {
+                let id = i64::try_from(n + 1).context("BIGINT key overflow")?;
+                if (n as usize) < args.sample_size {
+                    writeln!(sample, "{id}")?;
+                }
+                batch.extend_from_slice(&8_i32.to_be_bytes());
+                batch.extend_from_slice(&id.to_be_bytes());
+            }
+        }
+        if batch.len() >= args.batch_rows * row_bytes {
             copy.write_all(&batch)?;
             batch.clear();
         }
@@ -225,6 +277,6 @@ fn main() -> Result<()> {
         seconds,
         args.rows as f64 / seconds
     );
-    write_load_result(&args, &label, seconds)?;
+    write_load_result(&args, &label, seconds, uuid)?;
     Ok(())
 }

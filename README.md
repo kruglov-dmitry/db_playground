@@ -40,6 +40,15 @@ target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:543
 target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:54317/benchmark --uuid v7 --table benchmark_items_v7 --rows 200000000 --truncate --sample-output samples/pg17-v7.csv
 ```
 
+## BIGINT primary-key baseline
+
+The project also includes the same sequential `BIGINT PRIMARY KEY` test on both PostgreSQL versions. It measures an append-only integer-key baseline; unlike UUIDv4, these values are not random.
+
+```bash
+target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:54317/benchmark --key-type bigint --table benchmark_items_bigint --rows 200000000 --truncate --sample-output samples/pg17-bigint.csv
+target/release/pg-uuid-loader --dsn postgres://benchmark:benchmark@localhost:54318/benchmark --key-type bigint --table benchmark_items_bigint --rows 200000000 --truncate --sample-output samples/pg18-bigint.csv
+```
+
 ## Compare lookup plans
 
 The loader saves real inserted IDs, avoiding the misleading “all misses” plan that random lookup values would produce.
@@ -60,6 +69,15 @@ scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54317/benchm
 scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54317/benchmark samples/pg17-v7.csv 1000 pg17-v7 benchmark_items_v7
 ```
 
+For the BIGINT tables, use the final `bigint` argument:
+
+```bash
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54317/benchmark samples/pg17-bigint.csv 100 pg17-bigint benchmark_items_bigint bigint
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54317/benchmark samples/pg17-bigint.csv 1000 pg17-bigint benchmark_items_bigint bigint
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchmark samples/pg18-bigint.csv 100 pg18-bigint benchmark_items_bigint bigint
+scripts/explain-lookups.sh postgres://benchmark:benchmark@localhost:54318/benchmark samples/pg18-bigint.csv 1000 pg18-bigint benchmark_items_bigint bigint
+```
+
 Every run creates two files under `results/`: a `*.plan.json` execution plan and a `*.meta.json` snapshot containing database/index sizes, server version, lookup count, and timestamp. These are the inputs for the comparison visualizer; they are intentionally excluded from Git. Optionally add a fourth argument to use a custom label.
 
 ## Visualize the comparison
@@ -70,7 +88,7 @@ After the eight lookup runs are complete, generate the report:
 python3 scripts/visualize-results.py
 ```
 
-Open `results/comparison.html`. It automatically includes every complete plan/metadata pair in `results/`, including all four PostgreSQL/UUID combinations. After each successful load, the loader saves its duration and throughput as `results/<label>.load.json`; the report reads those files automatically. The label defaults to the sample filename (for example, `samples/pg18-v4.csv` becomes `pg18-v4`).
+Open `results/comparison.html`. It automatically includes every complete plan/metadata pair in `results/`, including UUID and BIGINT combinations. After each successful load, the loader saves its duration and throughput as `results/<label>.load.json`; the report reads those files automatically. The label defaults to the sample filename (for example, `samples/pg18-v4.csv` becomes `pg18-v4`).
 
 To compare on-disk footprint after a load:
 
